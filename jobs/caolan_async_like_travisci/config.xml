@@ -1,0 +1,100 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<project>
+  <actions/>
+  <description></description>
+  <keepDependencies>false</keepDependencies>
+  <properties/>
+  <scm class="hudson.plugins.git.GitSCM" plugin="git@2.0">
+    <configVersion>2</configVersion>
+    <userRemoteConfigs>
+      <hudson.plugins.git.UserRemoteConfig>
+        <url>https://github.com/caolan/async.git</url>
+      </hudson.plugins.git.UserRemoteConfig>
+    </userRemoteConfigs>
+    <branches>
+      <hudson.plugins.git.BranchSpec>
+        <name>*/master</name>
+      </hudson.plugins.git.BranchSpec>
+    </branches>
+    <doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations>
+    <submoduleCfg class="list"/>
+    <extensions>
+      <hudson.plugins.git.extensions.impl.CleanCheckout/>
+    </extensions>
+  </scm>
+  <canRoam>true</canRoam>
+  <disabled>false</disabled>
+  <blockBuildWhenDownstreamBuilding>false</blockBuildWhenDownstreamBuilding>
+  <blockBuildWhenUpstreamBuilding>false</blockBuildWhenUpstreamBuilding>
+  <triggers/>
+  <concurrentBuild>false</concurrentBuild>
+  <builders>
+    <hudson.tasks.Shell>
+      <command>#!/usr/bin/env bash
+
+set -e
+
+VERSIONS=(0.8 0.10 0.11)
+
+for ((i = 0; i &lt; &quot;${#VERSIONS[@]}&quot;; i++)); do
+    VERSION=&quot;${VERSIONS[$i]}&quot;
+    _WORKSPACE=&quot;${WORKSPACE}.${BUILD_NUMBER}.${VERSION}&quot;
+    cp -R &quot;${WORKSPACE}&quot; &quot;${_WORKSPACE}&quot;
+
+    CONTAINER_ID=$(docker run -d -v &quot;${_WORKSPACE}&quot;:/workspace -w /workspace -u worker -e &quot;HOME=/home/worker&quot; jenkins-with-docker/nodejs &quot;$(cat &lt;&lt;EOL
+source /.nvm/nvm.sh
+nvm use &quot;${VERSION}&quot;
+npm install
+npm test
+EOL
+)&quot;
+)
+    echo &quot;-----&gt; Started Build: ${VERSION}&quot;
+    echo &quot;CONTAINER_ID: ${CONTAINER_ID}&quot;
+    echo &quot;WORKSPACE: ${_WORKSPACE}&quot;
+    echo
+
+    sleep 3
+
+    CONTAINER_IDS=&quot;${CONTAINER_IDS} ${CONTAINER_ID}&quot;
+done
+
+EXIT_STATUSES=&quot;$(docker wait ${CONTAINER_IDS})&quot;
+
+echo &quot;-----&gt; Results&quot;
+
+CONTAINER_IDS_ARRAY=(`echo ${CONTAINER_IDS}`)
+IS_FAILED=0
+i=0; for EXIT_STATUS in ${EXIT_STATUSES}; do
+    STARTED_AT=$(docker inspect &quot;${CONTAINER_IDS_ARRAY[$i]}&quot; | jq -r &quot;.[0].State.StartedAt&quot;)
+    FINISHED_AT=$(docker inspect &quot;${CONTAINER_IDS_ARRAY[$i]}&quot; | jq -r &quot;.[0].State.FinishedAt&quot;)
+    TIME=&quot;$(expr `date -d &quot;${FINISHED_AT}&quot; +%s` - `date -d &quot;${STARTED_AT}&quot; +%s`)&quot;
+
+    if [[ &quot;${EXIT_STATUS}&quot; &gt; 0 ]]; then
+        echo -e &quot;\e[1;31m✘\e[m	${VERSIONS[$i]}	[${TIME} sec]&quot;
+    else
+        echo -e &quot;\e[1;32m✔\e[m	${VERSIONS[$i]}	[${TIME} sec]&quot;
+        IS_FAILED=1
+    fi
+
+    i=$((i + 1))
+done
+
+i=0; for CONTAINER_ID in ${CONTAINER_IDS[@]}; do
+    echo
+    echo &quot;---&gt; ${VERSIONS[$i]}&quot;
+    docker logs ${CONTAINER_ID}
+
+    i=$((i + 1))
+done
+
+exit ${IS_FAILED}</command>
+    </hudson.tasks.Shell>
+  </builders>
+  <publishers/>
+  <buildWrappers>
+    <hudson.plugins.ansicolor.AnsiColorBuildWrapper plugin="ansicolor@0.3.1">
+      <colorMapName>xterm</colorMapName>
+    </hudson.plugins.ansicolor.AnsiColorBuildWrapper>
+  </buildWrappers>
+</project>
